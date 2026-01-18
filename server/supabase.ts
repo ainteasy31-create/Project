@@ -2,22 +2,10 @@
  * Supabase Server Client
  * =====================
  * Centralized, SAFE Supabase server client.
- *
- * GOALS:
- * - Zero silent failures
- * - Zero random auth crashes
- * - Clear startup diagnostics
- * - Mobile-safe behavior
  */
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
-
-/* ------------------------------------------------ */
-/* Environment Validation */
-/* ------------------------------------------------ */
-
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+import { validateSupabaseEnv } from "./lib/env";
 
 let supabaseClient: SupabaseClient | null = null;
 
@@ -29,36 +17,31 @@ function isValidSupabaseUrl(url: string) {
 }
 
 /* ------------------------------------------------ */
-/* Client Initialization */
+/* Client Initialization (fail-fast, validated) */
 /* ------------------------------------------------ */
+try {
+  // validateSupabaseEnv will throw if required values are missing
+  const { url, serviceKey } = validateSupabaseEnv();
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  console.warn(
-    "[SUPABASE] ❌ Supabase not configured.\n" +
-      "Missing environment variables:\n" +
-      `${!SUPABASE_URL ? "- SUPABASE_URL\n" : ""}` +
-      `${!SUPABASE_SERVICE_ROLE_KEY ? "- SUPABASE_SERVICE_ROLE_KEY\n" : ""}` +
-      "➡ Add these in Replit Secrets.\n"
-  );
-} else if (!isValidSupabaseUrl(SUPABASE_URL)) {
-  console.error(
-    "[SUPABASE] ❌ Invalid SUPABASE_URL format.\n" +
-      "Expected something like: https://xxxx.supabase.co"
-  );
-} else {
-  supabaseClient = createClient(
-    SUPABASE_URL,
-    SUPABASE_SERVICE_ROLE_KEY,
-    {
-      auth: {
-        persistSession: false, // 🔥 IMPORTANT: prevents random session bleed
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-      },
-    }
-  );
+  if (!isValidSupabaseUrl(url)) {
+    console.warn(
+      "[SUPABASE] ⚠️ Warning: SUPABASE_URL does not appear to be a standard Supabase URL"
+    );
+  }
+
+  supabaseClient = createClient(url, serviceKey, {
+    auth: {
+      persistSession: false, // prevents random session bleed
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
 
   console.log("[SUPABASE] ✅ Server client initialized");
+} catch (err: any) {
+  // Fail-fast: bubble up error to prevent app from running in a broken state
+  console.error("[SUPABASE] ❌ Initialization failed:", err?.message || err);
+  throw err;
 }
 
 /* ------------------------------------------------ */
@@ -72,8 +55,7 @@ export function isSupabaseConfigured(): boolean {
 export function getSupabaseOrThrow(): SupabaseClient {
   if (!supabaseClient) {
     throw new Error(
-      "[SUPABASE] Client not initialized. " +
-        "Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Replit Secrets."
+      "[SUPABASE] Client not initialized. Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Replit Secrets."
     );
   }
 
@@ -91,10 +73,7 @@ export function getSupabase(): SupabaseClient | null {
 /* Diagnostics */
 /* ------------------------------------------------ */
 
-export async function testSupabaseConnection(): Promise<{
-  connected: boolean;
-  error?: string;
-}> {
+export async function testSupabaseConnection(): Promise<{ connected: boolean; error?: string; }> {
   if (!supabaseClient) {
     return {
       connected: false,
@@ -134,4 +113,4 @@ export async function validateSupabaseConnection(): Promise<void> {
   }
 }
 
-export { supabaseClient as supabase };
+export { supabaseClient as supabase }
