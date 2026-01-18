@@ -3,7 +3,7 @@ import { type Server } from "node:http";
 import express, { type Express, type Request, Response, NextFunction } from "express";
 import cors from "cors";
 import helmet from "helmet";
-import { registerRoutes } from "./routes";
+import { validateEnv } from "./lib/env";
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -115,11 +115,20 @@ app.use((req, res, next) => {
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+        // Limit sensitive data exposure in logs
+        try {
+          const safeJson = JSON.stringify(capturedJsonResponse, (key, value) => {
+            if (key === 'password' || key === 'password_hash' || key === 'ssn') return undefined;
+            return value;
+          });
+          logLine += ` :: ${safeJson}`;
+        } catch {
+          logLine += ' :: [unserializable response]';
+        }
       }
 
-      if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
+      if (logLine.length > 200) {
+        logLine = logLine.slice(0, 199) + "…";
       }
 
       log(logLine);
@@ -132,6 +141,15 @@ app.use((req, res, next) => {
 export default async function runApp(
   setup: (app: Express, server: Server) => Promise<void>,
 ) {
+  // Run environment validation BEFORE importing or initializing any modules that
+  // may initialize Supabase or perform side effects. This prevents silent
+  // misconfiguration at startup.
+  validateEnv();
+
+  // Dynamically import routes after environment validation so that any side-
+  // effectful imports (e.g. supabase) happen after we have validated env vars.
+  const { registerRoutes } = await import("./routes");
+
   const server = await registerRoutes(app);
   // trust proxy must be set for express-rate-limit to work correctly behind proxies (like Replit)
   app.set('trust proxy', 1);
